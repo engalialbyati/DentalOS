@@ -1,0 +1,7 @@
+.tmp/
+
+credentials.json
+*.log
+__pycache__/
+*.pyc
+.DS_Store
