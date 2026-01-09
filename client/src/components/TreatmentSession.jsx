@@ -8,7 +8,8 @@ const TreatmentSession = () => {
     const [selectedPatient, setSelectedPatient] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
 
-    const [selectedTooth, setSelectedTooth] = useState(null);
+    // Multi-select state
+    const [selectedTeeth, setSelectedTeeth] = useState([]);
     const [description, setDescription] = useState('');
 
     const [inventoryItems, setInventoryItems] = useState([]);
@@ -37,7 +38,12 @@ const TreatmentSession = () => {
     }, []);
 
     const handleToothClick = (number) => {
-        setSelectedTooth(number);
+        // Toggle selection
+        setSelectedTeeth(prev =>
+            prev.includes(number)
+                ? prev.filter(n => n !== number)
+                : [...prev, number]
+        );
     };
 
     const addMaterial = (itemId, qty) => {
@@ -59,30 +65,51 @@ const TreatmentSession = () => {
         setMessage('');
 
         try {
-            const formData = new FormData();
-            formData.append('patient_id', selectedPatient);
-            formData.append('date', date);
-            if (selectedTooth) formData.append('tooth_number', selectedTooth);
-            formData.append('description', description);
-            formData.append('materials', JSON.stringify(usedMaterials));
+            // Logic: If multiple teeth are selected, save one record per tooth.
+            // Attach Materials & Images ONLY to the FIRST record to avoid double-deduction.
 
-            if (selectedImages) {
-                for (let i = 0; i < selectedImages.length; i++) {
-                    formData.append('images', selectedImages[i]);
+            const teethToProcess = selectedTeeth.length > 0 ? selectedTeeth : [null];
+
+            for (let i = 0; i < teethToProcess.length; i++) {
+                const toothNum = teethToProcess[i];
+                const isPrimary = (i === 0);
+
+                const formData = new FormData();
+                formData.append('patient_id', selectedPatient);
+                formData.append('date', date);
+                if (toothNum) formData.append('tooth_number', toothNum);
+
+                // Construct description
+                let desc = description;
+                if (selectedTeeth.length > 1) {
+                    desc = `[Multi-Select Session: ${selectedTeeth.join(', ')}] ${description}`;
                 }
-            }
+                formData.append('description', desc);
 
-            await axios.post('http://localhost:5001/api/treatments', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
-            });
+                // Attach materials/images only to primary
+                if (isPrimary) {
+                    formData.append('materials', JSON.stringify(usedMaterials));
+                    if (selectedImages) {
+                        for (let j = 0; j < selectedImages.length; j++) {
+                            formData.append('images', selectedImages[j]);
+                        }
+                    }
+                } else {
+                    formData.append('materials', JSON.stringify([]));
+                }
+
+                await axios.post('http://localhost:5001/api/treatments', formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+            }
 
             setMessage('Treatment saved successfully!');
             // Reset form
             setDescription('');
-            setSelectedTooth(null);
+            setSelectedTeeth([]);
             setUsedMaterials([]);
             setSelectedImages([]);
-            // Keep patient selected for convenience?
+            // Keep patient selected for convenience
         } catch (err) {
             console.error(err);
             setMessage('Error saving treatment.');
@@ -127,29 +154,23 @@ const TreatmentSession = () => {
 
                 {/* 2. Charting */}
                 <div className="border p-4 rounded bg-gray-50">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Dental Chart (Select Tooth)</label>
-                    <div className="flex justify-center">
-                        {/* We reuse Odontogram but need to handle click differently. 
-                            Currently Odontogram opens modal. We can pass a `onSelect` prop if we modify it, 
-                            or just wrapper it. Let's assume we modify Odontogram to accept 'interactiveMode' prop. 
-                            If 'interactiveMode' is 'select', it calls onSelect instead of opening modal.
-                            For now, passing patientId null might clear chart data but allow clicking? 
-                            Odontogram expects patientId to load data. 
-                            If selectedPatient is set, we pass it. If null, it shows empty.
-                        */}
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Dental Chart (Interactive 2D)</label>
+                    <div className="flex justify-center flex-col items-center">
                         {selectedPatient ? (
-                            <div className="relative">
+                            <>
                                 <Odontogram
-                                    patientId={selectedPatient}
+                                    selectedTeeth={selectedTeeth}
                                     onToothSelect={handleToothClick}
-                                    disableModal={true} // New prop we need to add
+                                    disableModal={true}
                                 />
-                                {selectedTooth && (
-                                    <div className="absolute top-0 right-0 bg-blue-600 text-white p-2 rounded shadow">
-                                        Selected: #{selectedTooth}
+                                {selectedTeeth.length > 0 ? (
+                                    <div className="mt-2 text-blue-600 font-medium">
+                                        Selected: {selectedTeeth.join(', ')}
                                     </div>
+                                ) : (
+                                    <div className="mt-2 text-gray-500 text-sm">Click teeth to select multiple (toggle)</div>
                                 )}
-                            </div>
+                            </>
                         ) : (
                             <p className="text-gray-500 italic">Select a patient to view chart.</p>
                         )}
@@ -170,12 +191,12 @@ const TreatmentSession = () => {
 
                 {/* 4. Inventory Usage */}
                 <div className="border p-4 rounded bg-gray-50">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Materials Used</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Materials Used (Applied to first record)</label>
                     <div className="flex gap-2 mb-2 items-end">
                         <select id="inv-select" className="border p-2 rounded flex-1">
                             <option value="">Select Item</option>
                             {inventoryItems.map(i => (
-                                <option key={i.id} value={i.id}>{i.name} (Stock: ?)</option> // Ideal to show stock
+                                <option key={i.id} value={i.id}>{i.name}</option> // Ideal to show stock
                             ))}
                         </select>
                         <input id="inv-qty" type="number" className="border p-2 rounded w-20" placeholder="Qty" />

@@ -6,7 +6,7 @@ const db = require('../db');
 router.get('/', async (req, res) => {
     try {
         const result = await db.query(`
-            SELECT lc.*, p.first_name || ' ' || p.last_name as patient_name
+            SELECT lc.*, p.name as patient_name
             FROM lab_cases lc
             JOIN patients p ON lc.patient_id = p.id
             ORDER BY lc.due_date ASC
@@ -23,8 +23,8 @@ router.post('/', async (req, res) => {
     const { patient_id, lab_name, tooth_number, instruction_notes, due_date, status = 'Sent' } = req.body;
     try {
         const result = await db.query(
-            `INSERT INTO lab_cases (patient_id, lab_name, tooth_number, instruction_notes, due_date, status)
-             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+            `INSERT INTO lab_cases(patient_id, lab_name, tooth_number, instruction_notes, due_date, status)
+        VALUES($1, $2, $3, $4, $5, $6) RETURNING * `,
             [patient_id, lab_name, tooth_number, instruction_notes, due_date, status]
         );
         res.status(201).json(result.rows[0]);
@@ -46,7 +46,7 @@ router.put('/:id', async (req, res) => {
         }
 
         const result = await db.query(
-            `UPDATE lab_cases SET status = $1, received_date = $2 WHERE id = $3 RETURNING *`,
+            `UPDATE lab_cases SET status = $1, received_date = $2 WHERE id = $3 RETURNING * `,
             [status, recDate, id]
         );
         res.json(result.rows[0]);

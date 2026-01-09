@@ -93,3 +93,19 @@ CREATE TABLE inventory_batches (
 CREATE INDEX idx_inventory_expiry ON inventory_batches(expiration_date);
 
 -- REMOVED: periodontal_charts
+
+-- 8. Lab Cases (External Orders)
+CREATE TABLE lab_cases (
+    id SERIAL PRIMARY KEY,
+    patient_id INT REFERENCES patients(id) ON DELETE CASCADE,
+    lab_name VARCHAR(100) NOT NULL,
+    tooth_number INT,
+    instruction_notes TEXT,
+    sent_date DATE DEFAULT CURRENT_DATE,
+    due_date DATE NOT NULL,
+    received_date DATE,
+    status VARCHAR(20) DEFAULT 'Sent',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_lab_due_date ON lab_cases(due_date);

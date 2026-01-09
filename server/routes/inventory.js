@@ -128,4 +128,80 @@ router.post('/suppliers', async (req, res) => {
     }
 });
 
+// --- DASHBOARD STATS ---
+
+router.get('/dashboard/stats', async (req, res) => {
+    try {
+        const stats = {};
+
+        // 1. Total Inventory Value (Unit Price * Qty on Hand)
+        const valueRes = await db.query(`
+            SELECT SUM(i.unit_price * b.quantity_on_hand) as total_value
+            FROM inventory_items i
+            JOIN inventory_batches b ON i.id = b.item_id
+        `);
+        stats.totalValue = valueRes.rows[0].total_value || 0;
+
+        // 2. Low Stock Items Count
+        const lowStockRes = await db.query(`
+            SELECT COUNT(*) 
+            FROM (
+                SELECT i.id
+                FROM inventory_items i
+                LEFT JOIN inventory_batches b ON i.id = b.item_id
+                GROUP BY i.id
+                HAVING COALESCE(SUM(b.quantity_on_hand), 0) <= i.threshold_limit
+            ) as low_stock
+        `);
+        stats.lowStockCount = parseInt(lowStockRes.rows[0].count);
+
+        // 3. Expiring Soon (Next 30 days)
+        const expiringRes = await db.query(`
+            SELECT COUNT(*)
+            FROM inventory_batches
+            WHERE expiration_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+            AND quantity_on_hand > 0
+        `);
+        stats.expiringCount = parseInt(expiringRes.rows[0].count);
+
+        res.json(stats);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+// PUT /api/inventory/items/:id
+router.put('/items/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, category, supplier_id, threshold_limit, unit_price, sku } = req.body;
+    try {
+        const result = await db.query(
+            `UPDATE inventory_items 
+             SET name = $1, category = $2, supplier_id = $3, threshold_limit = $4, unit_price = $5, sku = $6
+             WHERE id = $7 RETURNING *`,
+            [name, category, supplier_id, threshold_limit, unit_price, sku, id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
+router.put('/suppliers/:id', async (req, res) => {
+    const { id } = req.params;
+    const { name, contact_name, phone, email } = req.body;
+    try {
+        const result = await db.query(
+            'UPDATE suppliers SET name = $1, contact_name = $2, phone = $3, email = $4 WHERE id = $5 RETURNING *',
+            [name, contact_name, phone, email, id]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Server error' });
+    }
+});
+
 module.exports = router;

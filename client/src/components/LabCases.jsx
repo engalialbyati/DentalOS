@@ -1,156 +1,172 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Truck, CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import { Package, Calendar, CheckSquare, Clock, Plus } from 'lucide-react';
+import LabCaseModal from './LabCaseModal';
+import moment from 'moment';
+
+const StatusBadge = ({ status }) => {
+    const colors = {
+        'Sent': 'bg-yellow-100 text-yellow-800',
+        'In Production': 'bg-blue-100 text-blue-800',
+        'Received': 'bg-green-100 text-green-800',
+        'Delivered': 'bg-gray-100 text-gray-800',
+        'Quality Checked': 'bg-purple-100 text-purple-800'
+    };
+    return (
+        <span className={`px-2 py-1 rounded text-xs font-bold ${colors[status] || 'bg-gray-100'}`}>
+            {status}
+        </span>
+    );
+};
 
 const LabCases = () => {
     const [cases, setCases] = useState([]);
     const [patients, setPatients] = useState([]);
+    const [loading, setLoading] = useState(false);
 
-    // Quick Add Form
-    const [newCase, setNewCase] = useState({ patient_id: '', lab_name: '', tooth_number: '', instruction_notes: '', due_date: '' });
+    // Modal State
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectedCase, setSelectedCase] = useState(null);
 
     useEffect(() => {
         fetchData();
-        loadPatients();
+        fetchPatients();
     }, []);
 
     const fetchData = async () => {
         try {
+            setLoading(true);
             const res = await axios.get('http://localhost:5001/api/lab-cases');
             setCases(res.data);
-        } catch (err) { console.error(err); }
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
     };
 
-    const loadPatients = async () => {
+    const fetchPatients = async () => {
         try {
             const res = await axios.get('http://localhost:5001/api/patients');
             setPatients(res.data);
-        } catch (err) { console.error(err); }
+        } catch (err) {
+            console.error(err);
+        }
     };
 
-    const handleCreate = async (e) => {
-        e.preventDefault();
+    const handleSave = async (caseData) => {
         try {
-            await axios.post('http://localhost:5001/api/lab-cases', newCase);
-            setNewCase({ patient_id: '', lab_name: '', tooth_number: '', instruction_notes: '', due_date: '' });
+            if (caseData.id) {
+                // Update
+                await axios.put(`http://localhost:5001/api/lab-cases/${caseData.id}`, caseData);
+            } else {
+                // Create
+                await axios.post('http://localhost:5001/api/lab-cases', caseData);
+            }
+            setIsModalOpen(false);
             fetchData();
-        } catch (err) { alert('Error creating lab case'); }
-    };
-
-    const updateStatus = async (id, status) => {
-        try {
-            await axios.put(`http://localhost:5001/api/lab-cases/${id}`, { status });
-            fetchData();
-        } catch (err) { alert('Error updating status'); }
+        } catch (err) {
+            alert('Error saving lab case');
+        }
     };
 
     const handleDelete = async (id) => {
-        if (!confirm('Remove this case record?')) return;
+        if (!window.confirm("Are you sure?")) return;
         try {
             await axios.delete(`http://localhost:5001/api/lab-cases/${id}`);
             fetchData();
-        } catch (err) { alert('Error deleting case'); }
+        } catch (err) {
+            console.error(err);
+        }
     };
 
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'Received': return 'bg-green-100 text-green-800';
-            case 'Delivered': return 'bg-blue-100 text-blue-800';
-            case 'In Production': return 'bg-yellow-100 text-yellow-800';
-            default: return 'bg-gray-100 text-gray-800';
+    const handleQuickStatus = async (item, newStatus) => {
+        try {
+            await axios.put(`http://localhost:5001/api/lab-cases/${item.id}`, {
+                status: newStatus,
+                received_date: newStatus === 'Received' ? new Date() : item.received_date
+            });
+            fetchData();
+        } catch (err) {
+            alert('Update failed');
         }
     };
 
     return (
-        <div className="p-6">
-            <h1 className="text-3xl font-bold mb-6 flex items-center gap-3">
-                <Truck className="text-purple-600" /> Lab Case Tracker
-            </h1>
-
-            {/* ADD FORM */}
-            <div className="bg-white p-4 rounded shadow mb-8 border-l-4 border-purple-600">
-                <h3 className="font-bold mb-4">New Lab Case</h3>
-                <form onSubmit={handleCreate} className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
-                    <div>
-                        <label className="block text-xs mb-1">Patient</label>
-                        <select className="border p-2 rounded w-full" value={newCase.patient_id} onChange={e => setNewCase({ ...newCase, patient_id: e.target.value })} required>
-                            <option value="">Select Patient...</option>
-                            {patients.map(p => <option key={p.id} value={p.id}>{p.first_name} {p.last_name}</option>)}
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-xs mb-1">Lab Name</label>
-                        <input className="border p-2 rounded w-full" value={newCase.lab_name} onChange={e => setNewCase({ ...newCase, lab_name: e.target.value })} required placeholder="e.g. Modern Dental Lab" />
-                    </div>
-                    <div>
-                        <label className="block text-xs mb-1">Tooth #</label>
-                        <input className="border p-2 rounded w-full" value={newCase.tooth_number} onChange={e => setNewCase({ ...newCase, tooth_number: e.target.value })} placeholder="e.g. 19" />
-                    </div>
-                    <div>
-                        <label className="block text-xs mb-1">Due Date</label>
-                        <input type="date" className="border p-2 rounded w-full" value={newCase.due_date} onChange={e => setNewCase({ ...newCase, due_date: e.target.value })} required />
-                    </div>
-                    <button type="submit" className="bg-purple-600 text-white px-4 py-2 rounded">Create Case</button>
-                    <div className="md:col-span-5">
-                        <label className="block text-xs mb-1">Instructions / Notes</label>
-                        <input className="border p-2 rounded w-full" value={newCase.instruction_notes} onChange={e => setNewCase({ ...newCase, instruction_notes: e.target.value })} placeholder="e.g. PFM Crown, Shade A2" />
-                    </div>
-                </form>
+        <div className="p-6 max-w-7xl mx-auto">
+            <div className="flex justify-between items-center mb-6">
+                <h1 className="text-3xl font-bold text-slate-800">Lab Cases Tracker</h1>
+                <button
+                    onClick={() => { setSelectedCase(null); setIsModalOpen(true); }}
+                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 font-medium"
+                >
+                    <Plus size={18} /> New Lab Case
+                </button>
             </div>
 
-            {/* LIST */}
-            <div className="bg-white rounded shadow overflow-hidden">
-                <table className="w-full text-left">
-                    <thead className="bg-gray-50 border-b">
-                        <tr>
-                            <th className="p-3">Patient</th>
-                            <th className="p-3">Lab</th>
-                            <th className="p-3">Details</th>
-                            <th className="p-3">Sent</th>
-                            <th className="p-3">Due</th>
-                            <th className="p-3">Status</th>
-                            <th className="p-3">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {cases.map(c => (
-                            <tr key={c.id} className="border-b hover:bg-gray-50">
-                                <td className="p-3 font-medium">{c.patient_name}</td>
-                                <td className="p-3 text-sm">{c.lab_name}</td>
-                                <td className="p-3 text-sm">
-                                    {c.tooth_number && <span className="font-bold mr-2">#{c.tooth_number}</span>}
-                                    {c.instruction_notes}
-                                </td>
-                                <td className="p-3 text-sm text-gray-500">{new Date(c.sent_date).toLocaleDateString()}</td>
-                                <td className="p-3 text-sm font-bold">{new Date(c.due_date).toLocaleDateString()}</td>
-                                <td className="p-3">
-                                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${getStatusColor(c.status)}`}>
-                                        {c.status}
-                                    </span>
-                                </td>
-                                <td className="p-3">
-                                    {c.status !== 'Received' && c.status !== 'Delivered' && (
-                                        <button onClick={() => updateStatus(c.id, 'Received')} className="text-xs bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600 mr-2">
-                                            Mark Received
-                                        </button>
-                                    )}
-                                    {c.status === 'Received' && (
-                                        <button onClick={() => updateStatus(c.id, 'Delivered')} className="text-xs bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600 mr-2">
-                                            Mark Delivered
-                                        </button>
-                                    )}
-                                    <button onClick={() => handleDelete(c.id)} className="text-red-400 hover:text-red-600 text-xs text-right ml-2">
-                                        Delete
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-                {cases.length === 0 && <div className="p-6 text-center text-gray-400">No active lab cases.</div>}
+            <div className="bg-white rounded shadow text-sm">
+                {loading ? <div className="p-4 text-center">Loading...</div> : (
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead className="bg-gray-50 border-b">
+                                <tr>
+                                    <th className="p-3">Due Date</th>
+                                    <th className="p-3">Patient</th>
+                                    <th className="p-3">Lab</th>
+                                    <th className="p-3">Tooth</th>
+                                    <th className="p-3">Instructions</th>
+                                    <th className="p-3">Status</th>
+                                    <th className="p-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {cases.map(c => (
+                                    <tr key={c.id} className="border-b hover:bg-gray-50">
+                                        <td className="p-3 font-medium flex items-center gap-2">
+                                            {moment(c.due_date).format('MMM D')}
+                                            {moment(c.due_date).isBefore(moment(), 'day') && c.status !== 'Delivered' && (
+                                                <span className="text-red-500" title="Overdue"><AlertCircle size={14} /></span>
+                                            )}
+                                        </td>
+                                        <td className="p-3">{c.patient_name}</td>
+                                        <td className="p-3 text-gray-600">{c.lab_name}</td>
+                                        <td className="p-3 font-bold">#{c.tooth_number}</td>
+                                        <td className="p-3 text-gray-500 max-w-[200px] truncate">{c.instruction_notes}</td>
+                                        <td className="p-3"><StatusBadge status={c.status} /></td>
+                                        <td className="p-3 text-right">
+                                            {c.status === 'Sent' && (
+                                                <button onClick={() => handleQuickStatus(c, 'Received')} className="text-green-600 hover:underline mr-2 text-xs">Mark Received</button>
+                                            )}
+                                            <button onClick={() => { setSelectedCase(c); setIsModalOpen(true); }} className="text-blue-600 hover:text-blue-800 mr-2 text-xs">Edit</button>
+                                            <button onClick={() => handleDelete(c.id)} className="text-red-500 hover:text-red-700 text-xs">Delete</button>
+                                        </td>
+                                    </tr>
+                                ))}
+                                {cases.length === 0 && (
+                                    <tr>
+                                        <td colSpan="7" className="p-6 text-center text-gray-400">No active lab cases</td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
             </div>
+
+            <LabCaseModal
+                isOpen={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                onSave={handleSave}
+                patients={patients}
+                initialData={selectedCase}
+            />
         </div>
     );
 };
+
+// Simple Alert Icon component since I missed importing only one icon
+const AlertCircle = ({ size }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+);
 
 export default LabCases;

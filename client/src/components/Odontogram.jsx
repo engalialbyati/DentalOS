@@ -6,7 +6,7 @@ import TreatmentModal from './TreatmentModal';
 // Helper to generate range
 const range = (start, end) => Array.from({ length: end - start + 1 }, (_, i) => start + i);
 
-const Odontogram = ({ patientId, onToothSelect, disableModal }) => {
+const Odontogram = ({ patientId, onToothSelect, disableModal, selectedTeeth = [] }) => {
     const [chartData, setChartData] = useState({});
     const [selectedTooth, setSelectedTooth] = useState(null);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -89,6 +89,7 @@ const Odontogram = ({ patientId, onToothSelect, disableModal }) => {
                                 key={id}
                                 number={id}
                                 status={chartData[id]?.status || 'Healthy'}
+                                isSelected={selectedTeeth.includes(id)}
                                 onClick={handleToothClick}
                             />
                         ))}
@@ -103,6 +104,7 @@ const Odontogram = ({ patientId, onToothSelect, disableModal }) => {
                                 key={id}
                                 number={id}
                                 status={chartData[id]?.status || 'Healthy'}
+                                isSelected={selectedTeeth.includes(id)}
                                 onClick={handleToothClick}
                             />
                         ))}
