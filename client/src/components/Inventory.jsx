@@ -1,214 +1,189 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { Package, AlertTriangle, DollarSign, Calendar, Truck } from 'lucide-react';
+import { Package, AlertTriangle, DollarSign, CalendarClock, Plus } from 'lucide-react';
+import api from '../lib/api';
+import { formatCurrency, formatDate } from '../lib/format';
 import StockInModal from './StockInModal';
+import { Button, Card, PageHeader, StatCard, Badge, Modal, Field, Input, Select, EmptyState, Spinner } from './ui';
 
-// --- SUB-COMPONENTS (Inline for speed, can check if too large) ---
-
-const StatCard = ({ title, value, icon: Icon, color }) => (
-    <div className="bg-white p-4 rounded shadow flex items-center gap-4">
-        <div className={`p-3 rounded-full ${color} text-white`}>
-            <Icon size={24} />
-        </div>
-        <div>
-            <p className="text-gray-500 text-sm">{title}</p>
-            <p className="text-2xl font-bold">{value}</p>
-        </div>
-    </div>
-);
-
-const InventoryList = ({ items, onStockIn, onRefresh }) => {
-    return (
-        <div className="bg-white rounded shadow text-sm"> {/* text-sm for density */}
-            <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                    <thead className="bg-gray-50 border-b">
-                        <tr>
-                            <th className="p-3 font-medium">SKU</th>
-                            <th className="p-3 font-medium">Item Name</th>
-                            <th className="p-3 font-medium">Category</th>
-                            <th className="p-3 font-medium">Supplier</th>
-                            <th className="p-3 font-medium text-right">In Stock</th>
-                            <th className="p-3 font-medium text-right">Unit Price</th>
-                            <th className="p-3 font-medium text-center">Status</th>
-                            <th className="p-3 font-medium text-right">Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {items.map(item => {
-                            const isLow = item.total_quantity <= item.threshold_limit;
-                            return (
-                                <tr key={item.id} className="border-b hover:bg-gray-50">
-                                    <td className="p-3 text-gray-500">{item.sku || '-'}</td>
-                                    <td className="p-3 font-medium text-slate-800">{item.name}</td>
-                                    <td className="p-3 text-gray-600">{item.category}</td>
-                                    <td className="p-3 text-gray-600">{item.supplier_name || 'N/A'}</td>
-                                    <td className={`p-3 text-right font-bold ${isLow ? 'text-red-500' : 'text-slate-700'}`}>
-                                        {item.total_quantity}
-                                    </td>
-                                    <td className="p-3 text-right">${item.unit_price}</td>
-                                    <td className="p-3 text-center">
-                                        {isLow && (
-                                            <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs">Low Stock</span>
-                                        )}
-                                    </td>
-                                    <td className="p-3 text-right">
-                                        <button
-                                            onClick={() => onStockIn(item)}
-                                            className="text-blue-600 hover:text-blue-800 text-xs font-bold border border-blue-200 px-2 py-1 rounded bg-blue-50"
-                                        >
-                                            + Stock In
-                                        </button>
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    );
-};
-
-const SupplierList = ({ suppliers, onAdd }) => {
-    return (
-        <div className="bg-white rounded shadow p-4">
-            <div className="flex justify-between items-center mb-4">
-                <h3 className="font-bold text-lg">Suppliers</h3>
-                <button
-                    onClick={onAdd}
-                    className="bg-slate-800 text-white px-3 py-2 rounded text-sm hover:bg-slate-700"
-                >
-                    Add Supplier
-                </button>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {suppliers.map(s => (
-                    <div key={s.id} className="border p-4 rounded hover:border-blue-300">
-                        <div className="font-bold text-lg">{s.name}</div>
-                        <div className="text-sm text-gray-600 mt-1">Contact: {s.contact_name}</div>
-                        <div className="text-sm text-gray-600">Phone: {s.phone}</div>
-                        <div className="text-sm text-gray-600">Email: {s.email}</div>
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
-// --- MAIN PAGE ---
-
-const Inventory = () => {
-    const [activeTab, setActiveTab] = useState('dashboard');
+export default function Inventory() {
+    const [tab, setTab] = useState('items');
     const [items, setItems] = useState([]);
     const [suppliers, setSuppliers] = useState([]);
     const [stats, setStats] = useState({ totalValue: 0, lowStockCount: 0, expiringCount: 0 });
+    const [loading, setLoading] = useState(true);
+    const [stockModal, setStockModal] = useState(false);
+    const [selectedItem, setSelectedItem] = useState(null);
+    const [itemModal, setItemModal] = useState(false);
+    const [editItem, setEditItem] = useState(null);
+    const [supplierModal, setSupplierModal] = useState(false);
 
-    // Modals
-    const [isStockModalOpen, setIsStockModalOpen] = useState(false);
-    const [selectedItemForStock, setSelectedItemForStock] = useState(null);
-
-    // Initial Load
-    useEffect(() => {
-        fetchData();
-    }, []);
-
-    const fetchData = async () => {
-        try {
-            const [itemRes, supRes, statRes] = await Promise.all([
-                axios.get('http://localhost:5001/api/inventory/items'),
-                axios.get('http://localhost:5001/api/inventory/suppliers'),
-                axios.get('http://localhost:5001/api/inventory/dashboard/stats')
-            ]);
-            setItems(itemRes.data);
-            setSuppliers(supRes.data);
-            setStats(statRes.data);
-        } catch (err) {
-            console.error("Failed to load inventory data", err);
-        }
+    const fetchData = () => {
+        Promise.all([
+            api.get('/api/inventory/items'),
+            api.get('/api/inventory/suppliers'),
+            api.get('/api/inventory/dashboard/stats'),
+        ])
+            .then(([i, s, st]) => { setItems(i.data); setSuppliers(s.data); setStats(st.data); })
+            .catch(console.error)
+            .finally(() => setLoading(false));
     };
 
-    const handleStockIn = async (data) => {
+    useEffect(() => { fetchData(); }, []);
+
+    const addStock = async (data) => {
         try {
-            await axios.post('http://localhost:5001/api/inventory/batches', data);
-            setIsStockModalOpen(false);
-            fetchData(); // Refresh everything
-        } catch (err) {
-            alert('Failed to add stock');
-        }
+            await api.post('/api/inventory/batches', data);
+            setStockModal(false);
+            fetchData();
+        } catch (e) { alert('Failed to add stock'); }
+    };
+
+    const saveItem = async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const payload = Object.fromEntries(fd.entries());
+        try {
+            if (editItem) await api.put(`/api/inventory/items/${editItem.id}`, payload);
+            else await api.post('/api/inventory/items', payload);
+            setItemModal(false);
+            setEditItem(null);
+            fetchData();
+        } catch (e) { alert(e.response?.data?.error || 'Failed to save item'); }
+    };
+
+    const saveSupplier = async (e) => {
+        e.preventDefault();
+        const payload = Object.fromEntries(new FormData(e.target).entries());
+        try {
+            await api.post('/api/inventory/suppliers', payload);
+            setSupplierModal(false);
+            fetchData();
+        } catch (e) { alert('Failed to add supplier'); }
     };
 
     return (
-        <div className="p-6 max-w-7xl mx-auto space-y-6">
-            <h1 className="text-3xl font-bold text-slate-800">Inventory Management</h1>
+        <div className="p-6 max-w-7xl mx-auto">
+            <PageHeader title="Inventory" subtitle="Manage materials, stock batches, and suppliers." />
 
-            {/* Stats Row */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <StatCard
-                    title="Total Inventory Value"
-                    value={`$${Number(stats.totalValue).toLocaleString()}`}
-                    icon={DollarSign}
-                    color="bg-green-500"
-                />
-                <StatCard
-                    title="Low Stock Items"
-                    value={stats.lowStockCount}
-                    icon={AlertTriangle}
-                    color="bg-red-500"
-                />
-                <StatCard
-                    title="Expiring Soon (30 Days)"
-                    value={stats.expiringCount}
-                    icon={Calendar}
-                    color="bg-orange-500"
-                />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                <StatCard icon={DollarSign} label="Total Value" value={formatCurrency(stats.totalValue)} color="green" />
+                <StatCard icon={AlertTriangle} label="Low Stock" value={stats.lowStockCount} color="red" />
+                <StatCard icon={CalendarClock} label="Expiring (30d)" value={stats.expiringCount} color="amber" />
             </div>
 
-            {/* Tabs */}
-            <div className="flex gap-4 border-b">
-                <button
-                    className={`pb-2 px-4 ${activeTab === 'dashboard' ? 'border-b-2 border-blue-600 font-bold text-blue-600' : 'text-gray-500'}`}
-                    onClick={() => setActiveTab('dashboard')}
-                >
-                    Stock List
-                </button>
-                <button
-                    className={`pb-2 px-4 ${activeTab === 'suppliers' ? 'border-b-2 border-blue-600 font-bold text-blue-600' : 'text-gray-500'}`}
-                    onClick={() => setActiveTab('suppliers')}
-                >
-                    Suppliers
-                </button>
+            <div className="flex items-center justify-between mb-4">
+                <div className="flex gap-1 border-b border-slate-200">
+                    <TabBtn active={tab === 'items'} onClick={() => setTab('items')}>Items</TabBtn>
+                    <TabBtn active={tab === 'suppliers'} onClick={() => setTab('suppliers')}>Suppliers</TabBtn>
+                </div>
+                {tab === 'items'
+                    ? <Button onClick={() => { setEditItem(null); setItemModal(true); }}><Plus size={18} /> Add Item</Button>
+                    : <Button onClick={() => setSupplierModal(true)}><Plus size={18} /> Add Supplier</Button>}
             </div>
 
-            {/* Content */}
-            {activeTab === 'dashboard' && (
-                <InventoryList
-                    items={items}
-                    onStockIn={(item) => {
-                        setSelectedItemForStock(item);
-                        setIsStockModalOpen(true);
-                    }}
-                    onRefresh={fetchData}
-                />
+            {tab === 'items' && (
+                <Card className="p-0 overflow-hidden">
+                    {loading ? <Spinner /> : items.length === 0 ? (
+                        <EmptyState icon={Package} title="No inventory items" message="Add materials you use in the clinic." />
+                    ) : (
+                        <table className="w-full text-left">
+                            <thead className="bg-slate-50 border-b border-slate-200">
+                                <tr>{['Item', 'Category', 'Supplier', 'Stock', 'Price', 'Status', ''].map((h, i) => (
+                                    <th key={i} className={`px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide ${i >= 3 ? 'text-right' : ''}`}>{h}</th>
+                                ))}</tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                                {items.map((item) => {
+                                    const low = item.total_quantity <= item.threshold_limit;
+                                    return (
+                                        <tr key={item.id} className="hover:bg-slate-50/70">
+                                            <td className="px-4 py-3">
+                                                <p className="font-semibold text-slate-800">{item.name}</p>
+                                                <p className="text-xs text-slate-400">{item.sku || 'No SKU'}</p>
+                                            </td>
+                                            <td className="px-4 py-3 text-slate-600">{item.category || '—'}</td>
+                                            <td className="px-4 py-3 text-slate-600">{item.supplier_name || '—'}</td>
+                                            <td className="px-4 py-3 text-right font-bold text-slate-700">{item.total_quantity}</td>
+                                            <td className="px-4 py-3 text-right text-slate-600">{formatCurrency(item.unit_price)}</td>
+                                            <td className="px-4 py-3 text-right">{low && <Badge color="red">Low</Badge>}</td>
+                                            <td className="px-4 py-3 text-right">
+                                                <Button variant="outline" size="sm" onClick={() => { setSelectedItem(item); setStockModal(true); }}>+ Stock</Button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    )}
+                </Card>
             )}
 
-            {activeTab === 'suppliers' && (
-                <SupplierList
-                    suppliers={suppliers}
-                    onAdd={() => alert('Add Supplier Modal Implementation needed')}
-                />
+            {tab === 'suppliers' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {suppliers.map((s) => (
+                        <Card key={s.id}>
+                            <p className="font-bold text-slate-800">{s.name}</p>
+                            <p className="text-sm text-slate-600 mt-1">{s.contact_name || '—'}</p>
+                            <p className="text-sm text-slate-500">{s.phone || '—'}</p>
+                            <p className="text-sm text-slate-500">{s.email || '—'}</p>
+                        </Card>
+                    ))}
+                    {suppliers.length === 0 && !loading && (
+                        <Card className="col-span-full"><EmptyState icon={Package} title="No suppliers yet" /></Card>
+                    )}
+                </div>
             )}
 
-            {/* Modals */}
-            <StockInModal
-                item={selectedItemForStock}
-                isOpen={isStockModalOpen}
-                onClose={() => setIsStockModalOpen(false)}
-                onSave={handleStockIn}
-            />
+            <StockInModal item={selectedItem} isOpen={stockModal} onClose={() => setStockModal(false)} onSave={addStock} />
 
+            {/* Add/Edit item modal */}
+            <Modal isOpen={itemModal} onClose={() => setItemModal(false)} title={editItem ? 'Edit Item' : 'New Item'}>
+                <ItemForm item={editItem} suppliers={suppliers} onSubmit={saveItem} onCancel={() => setItemModal(false)} />
+            </Modal>
+
+            {/* Supplier modal */}
+            <Modal isOpen={supplierModal} onClose={() => setSupplierModal(false)} title="New Supplier">
+                <form onSubmit={saveSupplier} className="space-y-4">
+                    <Field label="Name" required><Input name="name" required /></Field>
+                    <Field label="Contact Name"><Input name="contact_name" /></Field>
+                    <Field label="Phone"><Input name="phone" /></Field>
+                    <Field label="Email"><Input name="email" type="email" /></Field>
+                    <div className="flex justify-end gap-2 pt-2">
+                        <Button type="button" variant="secondary" onClick={() => setSupplierModal(false)}>Cancel</Button>
+                        <Button type="submit">Add Supplier</Button>
+                    </div>
+                </form>
+            </Modal>
         </div>
     );
-};
+}
 
-export default Inventory;
+function ItemForm({ item, suppliers, onSubmit, onCancel }) {
+    return (
+        <form onSubmit={onSubmit} className="space-y-4">
+            <Field label="Item Name" required><Input name="name" defaultValue={item?.name} required /></Field>
+            <div className="grid grid-cols-2 gap-4">
+                <Field label="Category"><Input name="category" defaultValue={item?.category} /></Field>
+                <Field label="SKU"><Input name="sku" defaultValue={item?.sku} /></Field>
+                <Field label="Unit Price"><Input name="unit_price" type="number" step="0.01" min="0" defaultValue={item?.unit_price} /></Field>
+                <Field label="Low-stock Threshold"><Input name="threshold_limit" type="number" min="0" defaultValue={item?.threshold_limit || 10} /></Field>
+            </div>
+            <Field label="Supplier">
+                <Select name="supplier_id" defaultValue={item?.supplier_id || ''}>
+                    <option value="">None</option>
+                    {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </Select>
+            </Field>
+            <div className="flex justify-end gap-2 pt-2">
+                <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
+                <Button type="submit">{item ? 'Save' : 'Add Item'}</Button>
+            </div>
+        </form>
+    );
+}
+
+const TabBtn = ({ active, onClick, children }) => (
+    <button onClick={onClick} className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${active ? 'border-brand-500 text-brand-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+        {children}
+    </button>
+);

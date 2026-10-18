@@ -9,7 +9,7 @@ router.get('/items', async (req, res) => {
     try {
         const result = await db.query(`
             SELECT i.*, s.name as supplier_name, 
-                   COALESCE(SUM(b.quantity_on_hand), 0)::int as total_quantity
+                   COALESCE(SUM(b.quantity_on_hand), 0) as total_quantity
             FROM inventory_items i
             LEFT JOIN suppliers s ON i.supplier_id = s.id
             LEFT JOIN inventory_batches b ON i.id = b.item_id
@@ -159,7 +159,7 @@ router.get('/dashboard/stats', async (req, res) => {
         const expiringRes = await db.query(`
             SELECT COUNT(*)
             FROM inventory_batches
-            WHERE expiration_date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '30 days'
+            WHERE expiration_date BETWEEN date('now') AND date('now','+30 day')
             AND quantity_on_hand > 0
         `);
         stats.expiringCount = parseInt(expiringRes.rows[0].count);

@@ -1,114 +1,83 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { Field, Input, Textarea, Modal, Button } from './ui';
 
-const PatientModal = ({ isOpen, onClose, onSave, initialData }) => {
-    const [formData, setFormData] = useState({
-        name: '',
-        age: '',
-        phone: '',
-        email: '',
-        address: '',
-        first_visit_date: new Date().toISOString().split('T')[0]
-    });
+const empty = {
+    name: '', age: '', phone: '', email: '', address: '',
+    first_visit_date: new Date().toISOString().split('T')[0],
+    allergies: '', medical_conditions: '', medications: '', notes: '',
+};
 
-    // Populate form if editing
-    React.useEffect(() => {
+export default function PatientModal({ isOpen, onClose, onSave, initialData }) {
+    const [form, setForm] = useState(empty);
+
+    useEffect(() => {
         if (initialData) {
-            setFormData({
-                name: initialData.name || '',
-                age: initialData.age || '',
-                phone: initialData.phone || '',
-                email: initialData.email || '',
-                address: initialData.address || '',
-                first_visit_date: initialData.first_visit_date ? initialData.first_visit_date.split('T')[0] : ''
+            setForm({
+                ...empty,
+                ...initialData,
+                first_visit_date: initialData.first_visit_date ? String(initialData.first_visit_date).split('T')[0] : '',
             });
         } else {
-            // Reset for new
-            setFormData({
-                name: '',
-                age: '',
-                phone: '',
-                email: '',
-                address: '',
-                first_visit_date: new Date().toISOString().split('T')[0]
-            });
+            setForm(empty);
         }
     }, [initialData, isOpen]);
 
-    if (!isOpen) return null;
+    const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-    const handleSubmit = (e) => {
+    const submit = (e) => {
         e.preventDefault();
-        onSave(formData);
+        onSave(form);
     };
 
     return (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white p-6 rounded shadow-lg w-96">
-                <h2 className="text-xl font-bold mb-4">{initialData ? 'Edit Patient' : 'New Patient'}</h2>
-                <form onSubmit={handleSubmit}>
-                    <div className="mb-3">
-                        <label className="block text-sm font-medium mb-1">Full Name</label>
-                        <input
-                            className="w-full border p-2 rounded"
-                            required
-                            value={formData.name}
-                            onChange={e => setFormData({ ...formData, name: e.target.value })}
-                        />
-                    </div>
-                    <div className="flex gap-2 mb-3">
-                        <div className="w-1/2">
-                            <label className="block text-sm font-medium mb-1">Age</label>
-                            <input
-                                type="number"
-                                className="w-full border p-2 rounded"
-                                required
-                                value={formData.age}
-                                onChange={e => setFormData({ ...formData, age: e.target.value })}
-                            />
-                        </div>
-                        <div className="w-1/2">
-                            <label className="block text-sm font-medium mb-1">First Visit</label>
-                            <input
-                                type="date"
-                                className="w-full border p-2 rounded"
-                                value={formData.first_visit_date}
-                                onChange={e => setFormData({ ...formData, first_visit_date: e.target.value })}
-                            />
-                        </div>
-                    </div>
-                    <div className="mb-3">
-                        <label className="block text-sm font-medium mb-1">Phone</label>
-                        <input
-                            className="w-full border p-2 rounded"
-                            value={formData.phone}
-                            onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                        />
-                    </div>
-                    <div className="mb-3">
-                        <label className="block text-sm font-medium mb-1">Email</label>
-                        <input
-                            type="email"
-                            className="w-full border p-2 rounded"
-                            value={formData.email}
-                            onChange={e => setFormData({ ...formData, email: e.target.value })}
-                        />
-                    </div>
-                    <div className="mb-4">
-                        <label className="block text-sm font-medium mb-1">Address</label>
-                        <textarea
-                            className="w-full border p-2 rounded h-20"
-                            value={formData.address}
-                            onChange={e => setFormData({ ...formData, address: e.target.value })}
-                        />
-                    </div>
-                    <div className="flex justify-end gap-2">
-                        <button type="button" onClick={onClose} className="px-4 py-2 bg-gray-200 rounded">Cancel</button>
-                        <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded">Save</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    );
-};
+        <Modal isOpen={isOpen} onClose={onClose} title={initialData ? 'Edit Patient' : 'New Patient'} size="lg">
+            <form onSubmit={submit} className="space-y-5">
+                {/* Demographics */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <Field label="Full Name" required>
+                        <Input value={form.name} onChange={set('name')} required />
+                    </Field>
+                    <Field label="Age">
+                        <Input type="number" min="0" max="130" value={form.age} onChange={set('age')} />
+                    </Field>
+                    <Field label="Phone">
+                        <Input value={form.phone} onChange={set('phone')} />
+                    </Field>
+                    <Field label="Email">
+                        <Input type="email" value={form.email} onChange={set('email')} />
+                    </Field>
+                    <Field label="Address">
+                        <Input value={form.address} onChange={set('address')} />
+                    </Field>
+                    <Field label="First Visit">
+                        <Input type="date" value={form.first_visit_date} onChange={set('first_visit_date')} />
+                    </Field>
+                </div>
 
-export default PatientModal;
+                {/* Medical history */}
+                <div>
+                    <p className="text-sm font-semibold text-slate-700 border-t border-slate-100 pt-4 mb-3">Medical History</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <Field label="Allergies">
+                            <Textarea rows={2} value={form.allergies} onChange={set('allergies')} placeholder="e.g. Penicillin, Latex" />
+                        </Field>
+                        <Field label="Medical Conditions">
+                            <Textarea rows={2} value={form.medical_conditions} onChange={set('medical_conditions')} placeholder="e.g. Diabetes, Hypertension" />
+                        </Field>
+                        <Field label="Current Medications">
+                            <Textarea rows={2} value={form.medications} onChange={set('medications')} />
+                        </Field>
+                        <Field label="Clinical Notes">
+                            <Textarea rows={2} value={form.notes} onChange={set('notes')} />
+                        </Field>
+                    </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                    <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+                    <Button type="submit">{initialData ? 'Save Changes' : 'Create Patient'}</Button>
+                </div>
+            </form>
+        </Modal>
+    );
+}

@@ -1,214 +1,103 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { Trash2, Plus, Pencil, X } from 'lucide-react';
+import { Trash2, Plus } from 'lucide-react';
+import api from '../lib/api';
+import { useAuth } from '../context/AuthContext';
+import { Card, PageHeader, Button, Field, Input, Badge } from './ui';
 
-const Settings = () => {
-    const [activeTab, setActiveTab] = useState('treatments');
-    const [treatments, setTreatments] = useState([]);
+export default function Settings() {
+    const { user } = useAuth();
+    const [tab, setTab] = useState('condition');
     const [conditions, setConditions] = useState([]);
     const [statuses, setStatuses] = useState([]);
-    const [editingId, setEditingId] = useState(null);
+    const [newItem, setNewItem] = useState({ code: '', label: '' });
 
-    // Form States
-    const [newTreatment, setNewTreatment] = useState({ name: '', cost: '', cdt_code: '', description: '' });
-    const [newLookup, setNewLookup] = useState({ code: '', label: '' });
-
-    useEffect(() => {
-        fetchData();
-    }, []);
-
-    const fetchData = async () => {
-        try {
-            const [tRes, cRes, sRes] = await Promise.all([
-                axios.get('http://localhost:5001/api/treatments'),
-                axios.get('http://localhost:5001/api/lookups?category=condition'),
-                axios.get('http://localhost:5001/api/lookups?category=status')
-            ]);
-            setTreatments(tRes.data);
-            setConditions(cRes.data);
-            setStatuses(sRes.data);
-        } catch (err) {
-            console.error(err);
-        }
+    const fetchData = () => {
+        Promise.all([api.get('/api/lookups?category=condition'), api.get('/api/lookups?category=status')])
+            .then(([c, s]) => { setConditions(c.data); setStatuses(s.data); })
+            .catch(console.error);
     };
 
-    const handleSaveTreatment = async (e) => {
+    useEffect(() => { fetchData(); }, []);
+
+    const add = async (e) => {
         e.preventDefault();
+        if (!newItem.label) return;
         try {
-            if (editingId) {
-                await axios.put(`http://localhost:5001/api/treatments/${editingId}`, newTreatment);
-            } else {
-                await axios.post('http://localhost:5001/api/treatments', newTreatment);
-            }
-            setNewTreatment({ name: '', cost: '', cdt_code: '', description: '' });
-            setEditingId(null);
+            await api.post('/api/lookups', { ...newItem, category: tab, sort_order: 0 });
+            setNewItem({ code: '', label: '' });
             fetchData();
-        } catch (err) {
-            alert('Error saving treatment');
-        }
+        } catch (err) { alert('Error adding item'); }
     };
 
-    const handleStartEdit = (treatment) => {
-        setNewTreatment(treatment);
-        setEditingId(treatment.id);
-    };
-
-    const handleCancelEdit = () => {
-        setNewTreatment({ name: '', cost: '', cdt_code: '', description: '' });
-        setEditingId(null);
-    };
-
-    const handleDeleteTreatment = async (id) => {
-        if (!confirm('Delete this treatment?')) return;
-        try {
-            await axios.delete(`http://localhost:5001/api/treatments/${id}`);
-            fetchData();
-        } catch (err) {
-            alert('Error deleting treatment');
-        }
-    };
-
-    const handleAddLookup = async (e, category) => {
-        e.preventDefault();
-        try {
-            await axios.post('http://localhost:5001/api/lookups', { ...newLookup, category });
-            setNewLookup({ code: '', label: '' });
-            fetchData();
-        } catch (err) {
-            alert('Error adding item');
-        }
-    };
-
-    const handleDeleteLookup = async (id) => {
+    const remove = async (id) => {
         if (!confirm('Delete this item?')) return;
-        try {
-            await axios.delete(`http://localhost:5001/api/lookups/${id}`);
-            fetchData();
-        } catch (err) {
-            alert('Error deleting item');
-        }
+        await api.delete(`/api/lookups/${id}`);
+        fetchData();
     };
+
+    const list = tab === 'condition' ? conditions : statuses;
 
     return (
-        <div className="p-6">
-            <h1 className="text-3xl font-bold mb-6">Settings</h1>
+        <div className="p-6 max-w-5xl mx-auto">
+            <PageHeader title="Settings" subtitle="Manage clinical catalogs and your account." />
 
-            <div className="flex border-b mb-6">
-                {['treatments', 'conditions', 'statuses'].map(tab => (
-                    <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        className={`px-6 py-3 capitalize font-medium ${activeTab === tab ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-500'}`}
-                    >
-                        {tab}
-                    </button>
-                ))}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Account card */}
+                <Card className="h-fit">
+                    <p className="text-xs font-semibold text-slate-400 uppercase mb-3">Account</p>
+                    <div className="flex items-center gap-3 mb-4">
+                        <div className="w-12 h-12 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center text-lg font-bold uppercase">
+                            {user?.full_name?.[0] || 'U'}
+                        </div>
+                        <div>
+                            <p className="font-bold text-slate-800">{user?.full_name}</p>
+                            <p className="text-sm text-slate-500">@{user?.username}</p>
+                        </div>
+                    </div>
+                    <Badge color="brand">{user?.role}</Badge>
+                </Card>
+
+                {/* Catalog management */}
+                <Card className="lg:col-span-2">
+                    <div className="flex gap-1 border-b border-slate-200 mb-4">
+                        <TabBtn active={tab === 'condition'} onClick={() => setTab('condition')}>Conditions</TabBtn>
+                        <TabBtn active={tab === 'status'} onClick={() => setTab('status')}>Statuses</TabBtn>
+                    </div>
+
+                    <form onSubmit={add} className="flex gap-3 items-end mb-5">
+                        <Field label="Label">
+                            <Input
+                                value={newItem.label}
+                                onChange={(e) => setNewItem({ label: e.target.value, code: e.target.value.toLowerCase().replace(/\s+/g, '_') })}
+                                placeholder={`New ${tab} label`}
+                                required
+                            />
+                        </Field>
+                        <Button type="submit"><Plus size={16} /> Add</Button>
+                    </form>
+
+                    <div className="space-y-2">
+                        {list.length === 0 && <p className="text-sm text-slate-400 py-4 text-center">No {tab}s defined.</p>}
+                        {list.map((item) => (
+                            <div key={item.id} className="flex items-center justify-between bg-slate-50 rounded-lg px-4 py-2.5">
+                                <div>
+                                    <span className="font-medium text-slate-800">{item.label}</span>
+                                    <span className="text-xs text-slate-400 ml-2">{item.code}</span>
+                                </div>
+                                <Button variant="ghost" size="icon" className="text-red-500" onClick={() => remove(item.id)}>
+                                    <Trash2 size={16} />
+                                </Button>
+                            </div>
+                        ))}
+                    </div>
+                </Card>
             </div>
-
-            {activeTab === 'treatments' && (
-                <div>
-                    <form onSubmit={handleSaveTreatment} className="bg-white p-4 rounded shadow mb-6 flex gap-4 items-end">
-                        <div>
-                            <label className="block text-xs mb-1">Name</label>
-                            <input className="border p-2 rounded" value={newTreatment.name} onChange={e => setNewTreatment({ ...newTreatment, name: e.target.value })} required />
-                        </div>
-                        <div>
-                            <label className="block text-xs mb-1">Code (CDT)</label>
-                            <input className="border p-2 rounded w-24" value={newTreatment.cdt_code} onChange={e => setNewTreatment({ ...newTreatment, cdt_code: e.target.value })} />
-                        </div>
-                        <div>
-                            <label className="block text-xs mb-1">Cost</label>
-                            <input type="number" className="border p-2 rounded w-24" value={newTreatment.cost} onChange={e => setNewTreatment({ ...newTreatment, cost: e.target.value })} required />
-                        </div>
-                        <div className="flex gap-2">
-                            <button type="submit" className={`${editingId ? 'bg-green-600 hover:bg-green-700' : 'bg-blue-600 hover:bg-blue-700'} text-white px-4 py-2 rounded flex items-center gap-2`}>
-                                {editingId ? <Pencil size={16} /> : <Plus size={16} />}
-                                {editingId ? 'Update' : 'Add'}
-                            </button>
-                            {editingId && (
-                                <button type="button" onClick={handleCancelEdit} className="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded flex items-center gap-2">
-                                    <X size={16} /> Cancel
-                                </button>
-                            )}
-                        </div>
-                    </form>
-
-                    <div className="bg-white rounded shadow overflow-hidden">
-                        <table className="w-full">
-                            <thead className="bg-gray-50 border-b">
-                                <tr>
-                                    <th className="p-3 text-left">Code</th>
-                                    <th className="p-3 text-left">Name</th>
-                                    <th className="p-3 text-left">Cost</th>
-                                    <th className="p-3"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {treatments.map(t => (
-                                    <tr key={t.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-3 text-gray-500 text-sm">{t.cdt_code}</td>
-                                        <td className="p-3 font-medium">{t.name}</td>
-                                        <td className="p-3">${t.cost}</td>
-                                        <td className="p-3 text-right flex justify-end gap-2">
-                                            <button onClick={() => handleStartEdit(t)} className="text-blue-500 hover:text-blue-700">
-                                                <Pencil size={16} />
-                                            </button>
-                                            <button onClick={() => handleDeleteTreatment(t.id)} className="text-red-500 hover:text-red-700">
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
-
-            {(activeTab === 'conditions' || activeTab === 'statuses') && (
-                <div>
-                    <form onSubmit={(e) => handleAddLookup(e, activeTab === 'conditions' ? 'condition' : 'status')} className="bg-white p-4 rounded shadow mb-6 flex gap-4 items-end">
-                        <div>
-                            <label className="block text-xs mb-1">Label (Display Name)</label>
-                            <input className="border p-2 rounded" value={newLookup.label} onChange={e => setNewLookup({ ...newLookup, label: e.target.value, code: e.target.value.toLowerCase().replace(/\s/g, '_') })} required />
-                        </div>
-                        <div>
-                            <label className="block text-xs mb-1">System Code</label>
-                            <input className="border p-2 bg-gray-100 rounded" value={newLookup.code} readOnly />
-                        </div>
-                        <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded flex items-center gap-2">
-                            <Plus size={16} /> Add {activeTab === 'conditions' ? 'Condition' : 'Status'}
-                        </button>
-                    </form>
-
-                    <div className="bg-white rounded shadow overflow-hidden w-full md:w-1/2">
-                        <table className="w-full">
-                            <thead className="bg-gray-50 border-b">
-                                <tr>
-                                    <th className="p-3 text-left">Label</th>
-                                    <th className="p-3 text-left">Code</th>
-                                    <th className="p-3"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {(activeTab === 'conditions' ? conditions : statuses).map(item => (
-                                    <tr key={item.id} className="border-b hover:bg-gray-50">
-                                        <td className="p-3 font-medium">{item.label}</td>
-                                        <td className="p-3 text-gray-500 text-sm">{item.code}</td>
-                                        <td className="p-3 text-right">
-                                            <button onClick={() => handleDeleteLookup(item.id)} className="text-red-500 hover:text-red-700">
-                                                <Trash2 size={16} />
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            )}
         </div>
     );
-};
+}
 
-export default Settings;
+const TabBtn = ({ active, onClick, children }) => (
+    <button onClick={onClick} className={`px-4 py-2 text-sm font-semibold border-b-2 -mb-px transition-colors ${active ? 'border-brand-500 text-brand-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}>
+        {children}
+    </button>
+);

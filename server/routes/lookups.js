@@ -1,13 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const { asyncHandler } = require('../middleware/errorHandler');
+const { requireString, clampString, requireInt } = require('../middleware/validate');
 
 // GET /api/lookups?category=condition
-router.get('/', async (req, res) => {
-    const { category } = req.query;
-    try {
+router.get(
+    '/',
+    asyncHandler(async (req, res) => {
+        const { category } = req.query;
         let query = 'SELECT * FROM lookups';
-        let params = [];
+        const params = [];
         if (category) {
             query += ' WHERE category = $1';
             params.push(category);
@@ -16,37 +19,34 @@ router.get('/', async (req, res) => {
 
         const result = await db.query(query, params);
         res.json(result.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
+    })
+);
 
 // POST /api/lookups
-router.post('/', async (req, res) => {
-    const { category, code, label, sort_order = 0 } = req.body;
-    try {
-        constresult = await db.query(
+router.post(
+    '/',
+    asyncHandler(async (req, res) => {
+        requireString(req.body, ['category', 'code', 'label']);
+        const code = clampString(req.body.code, 50);
+        const label = clampString(req.body.label, 100);
+        const category = clampString(req.body.category, 50);
+        const sortOrder = requireInt(req.body, 'sort_order', { min: 0, default: 0 });
+
+        const result = await db.query(
             'INSERT INTO lookups (category, code, label, sort_order) VALUES ($1, $2, $3, $4) RETURNING *',
-            [category, code, label, sort_order]
+            [category, code, label, sortOrder]
         );
         res.status(201).json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
+    })
+);
 
 // DELETE /api/lookups/:id
-router.delete('/:id', async (req, res) => {
-    const { id } = req.params;
-    try {
-        await db.query('DELETE FROM lookups WHERE id = $1', [id]);
+router.delete(
+    '/:id',
+    asyncHandler(async (req, res) => {
+        await db.query('DELETE FROM lookups WHERE id = $1', [req.params.id]);
         res.json({ message: 'Deleted successfully' });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
+    })
+);
 
 module.exports = router;

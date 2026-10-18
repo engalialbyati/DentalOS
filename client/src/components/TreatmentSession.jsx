@@ -1,262 +1,140 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { Save, Trash2, Plus } from 'lucide-react';
+import api from '../lib/api';
 import Odontogram from './Odontogram';
+import { Card, PageHeader, Button, Field, Input, Select, Textarea, Spinner } from './ui';
 
-const TreatmentSession = () => {
-    // State
+export default function TreatmentSession() {
     const [patients, setPatients] = useState([]);
     const [selectedPatient, setSelectedPatient] = useState('');
     const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-
-    // Multi-select state
     const [selectedTeeth, setSelectedTeeth] = useState([]);
     const [description, setDescription] = useState('');
-
     const [inventoryItems, setInventoryItems] = useState([]);
-    const [usedMaterials, setUsedMaterials] = useState([]); // [{ inventory_item_id, quantity }]
-
-    const [selectedImages, setSelectedImages] = useState([]); // FileList
-
-    // Status
-    const [loading, setLoading] = useState(false);
+    const [usedMaterials, setUsedMaterials] = useState([]);
+    const [selectedImages, setSelectedImages] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
 
     useEffect(() => {
-        // Fetch Patients and Inventory
-        const fetchData = async () => {
-            try {
-                const patRes = await axios.get('http://localhost:5001/api/patients');
-                setPatients(patRes.data);
-
-                const invRes = await axios.get('http://localhost:5001/api/inventory/items');
-                setInventoryItems(invRes.data);
-            } catch (err) {
-                console.error("Error fetching data", err);
-            }
-        };
-        fetchData();
+        Promise.all([api.get('/api/patients?limit=1000'), api.get('/api/inventory/items')])
+            .then(([p, i]) => { setPatients(p.data); setInventoryItems(i.data); })
+            .catch(console.error)
+            .finally(() => setLoading(false));
     }, []);
 
-    const handleToothClick = (number) => {
-        // Toggle selection
-        setSelectedTeeth(prev =>
-            prev.includes(number)
-                ? prev.filter(n => n !== number)
-                : [...prev, number]
-        );
+    const toggleTooth = (n) => setSelectedTeeth((prev) => (prev.includes(n) ? prev.filter((x) => x !== n) : [...prev, n]));
+    const addMaterial = () => {
+        const sel = document.getElementById('inv-select');
+        const qty = document.getElementById('inv-qty');
+        if (!sel.value || !qty.value) return;
+        setUsedMaterials((p) => [...p, { inventory_item_id: sel.value, quantity: qty.value }]);
+        sel.value = ''; qty.value = '';
     };
+    const removeMaterial = (i) => setUsedMaterials((p) => p.filter((_, idx) => idx !== i));
 
-    const addMaterial = (itemId, qty) => {
-        if (!itemId || !qty) return;
-        setUsedMaterials(prev => [...prev, { inventory_item_id: itemId, quantity: qty }]);
-    };
-
-    const removeMaterial = (index) => {
-        setUsedMaterials(prev => prev.filter((_, i) => i !== index));
-    };
-
-    const handleImageChange = (e) => {
-        setSelectedImages(e.target.files);
-    };
-
-    const handleSubmit = async (e) => {
+    const submit = async (e) => {
         e.preventDefault();
-        setLoading(true);
-        setMessage('');
-
+        setSaving(true); setMessage('');
         try {
-            // Logic: If multiple teeth are selected, save one record per tooth.
-            // Attach Materials & Images ONLY to the FIRST record to avoid double-deduction.
-
-            const teethToProcess = selectedTeeth.length > 0 ? selectedTeeth : [null];
-
-            for (let i = 0; i < teethToProcess.length; i++) {
-                const toothNum = teethToProcess[i];
-                const isPrimary = (i === 0);
-
-                const formData = new FormData();
-                formData.append('patient_id', selectedPatient);
-                formData.append('date', date);
-                if (toothNum) formData.append('tooth_number', toothNum);
-
-                // Construct description
-                let desc = description;
-                if (selectedTeeth.length > 1) {
-                    desc = `[Multi-Select Session: ${selectedTeeth.join(', ')}] ${description}`;
+            const teeth = selectedTeeth.length > 0 ? selectedTeeth : [null];
+            for (let i = 0; i < teeth.length; i++) {
+                const toothNum = teeth[i];
+                const isPrimary = i === 0;
+                const fd = new FormData();
+                fd.append('patient_id', selectedPatient);
+                fd.append('date', date);
+                if (toothNum) fd.append('tooth_number', toothNum);
+                fd.append('description', selectedTeeth.length > 1 ? `[${selectedTeeth.join(', ')}] ${description}` : description);
+                fd.append('materials', JSON.stringify(isPrimary ? usedMaterials : []));
+                if (isPrimary && selectedImages.length) {
+                    for (const img of selectedImages) fd.append('images', img);
                 }
-                formData.append('description', desc);
-
-                // Attach materials/images only to primary
-                if (isPrimary) {
-                    formData.append('materials', JSON.stringify(usedMaterials));
-                    if (selectedImages) {
-                        for (let j = 0; j < selectedImages.length; j++) {
-                            formData.append('images', selectedImages[j]);
-                        }
-                    }
-                } else {
-                    formData.append('materials', JSON.stringify([]));
-                }
-
-                await axios.post('http://localhost:5001/api/treatments', formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' }
-                });
+                await api.post('/api/treatments', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
             }
-
             setMessage('Treatment saved successfully!');
-            // Reset form
-            setDescription('');
-            setSelectedTeeth([]);
-            setUsedMaterials([]);
-            setSelectedImages([]);
-            // Keep patient selected for convenience
+            setDescription(''); setSelectedTeeth([]); setUsedMaterials([]); setSelectedImages([]);
         } catch (err) {
-            console.error(err);
-            setMessage('Error saving treatment.');
-        } finally {
-            setLoading(false);
-        }
+            setMessage(err.response?.data?.error || 'Error saving treatment.');
+        } finally { setSaving(false); }
     };
+
+    if (loading) return <Spinner className="min-h-[60vh]" />;
 
     return (
-        <div className="p-4 max-w-4xl mx-auto bg-white rounded shadow">
-            <h1 className="text-2xl font-bold mb-6 text-gray-800 border-b pb-2">New Treatment Session</h1>
-
-            <form onSubmit={handleSubmit} className="space-y-6">
-
-                {/* 1. Context */}
-                <div className="grid grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Patient</label>
-                        <select
-                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                            value={selectedPatient}
-                            onChange={e => setSelectedPatient(e.target.value)}
-                            required
-                        >
-                            <option value="">Select Patient</option>
-                            {patients.map(p => (
-                                <option key={p.id} value={p.id}>{p.name} (ID: {p.id})</option>
-                            ))}
-                        </select>
+        <div className="p-6 max-w-4xl mx-auto">
+            <PageHeader title="New Treatment Session" subtitle="Record a procedure, materials used, and clinical images." />
+            <Card>
+                <form onSubmit={submit} className="space-y-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <Field label="Patient" required>
+                            <Select value={selectedPatient} onChange={(e) => setSelectedPatient(e.target.value)} required>
+                                <option value="">Select patient</option>
+                                {patients.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </Select>
+                        </Field>
+                        <Field label="Date" required>
+                            <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+                        </Field>
                     </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700">Date</label>
-                        <input
-                            type="date"
-                            className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2"
-                            value={date}
-                            onChange={e => setDate(e.target.value)}
-                            required
-                        />
-                    </div>
-                </div>
 
-                {/* 2. Charting */}
-                <div className="border p-4 rounded bg-gray-50">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Dental Chart (Interactive 2D)</label>
-                    <div className="flex justify-center flex-col items-center">
+                    <div className="rounded-xl border border-slate-200 p-4 bg-slate-50/60">
+                        <p className="text-sm font-medium text-slate-700 mb-3">Dental Chart</p>
                         {selectedPatient ? (
                             <>
-                                <Odontogram
-                                    selectedTeeth={selectedTeeth}
-                                    onToothSelect={handleToothClick}
-                                    disableModal={true}
-                                />
-                                {selectedTeeth.length > 0 ? (
-                                    <div className="mt-2 text-blue-600 font-medium">
-                                        Selected: {selectedTeeth.join(', ')}
-                                    </div>
-                                ) : (
-                                    <div className="mt-2 text-gray-500 text-sm">Click teeth to select multiple (toggle)</div>
-                                )}
+                                <Odontogram selectedTeeth={selectedTeeth} onToothSelect={toggleTooth} disableModal />
+                                <p className="mt-2 text-sm text-brand-600 font-medium">
+                                    {selectedTeeth.length ? `Selected: ${selectedTeeth.join(', ')}` : 'Click teeth to select (toggle)'}
+                                </p>
                             </>
-                        ) : (
-                            <p className="text-gray-500 italic">Select a patient to view chart.</p>
+                        ) : <p className="text-slate-400 italic text-sm py-8 text-center">Select a patient to view the chart.</p>}
+                    </div>
+
+                    <Field label="Clinical Notes" required>
+                        <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Procedure details, observations…" required />
+                    </Field>
+
+                    <div className="rounded-xl border border-slate-200 p-4 bg-slate-50/60">
+                        <p className="text-sm font-medium text-slate-700 mb-3">Materials Used</p>
+                        <div className="flex gap-2 mb-3">
+                            <Select id="inv-select" className="flex-1">
+                                <option value="">Select item</option>
+                                {inventoryItems.map((i) => <option key={i.id} value={i.id}>{i.name} ({i.total_quantity} left)</option>)}
+                            </Select>
+                            <Input id="inv-qty" type="number" min="1" className="w-24" placeholder="Qty" />
+                            <Button type="button" variant="success" size="icon" onClick={addMaterial}><Plus size={18} /></Button>
+                        </div>
+                        {usedMaterials.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                                {usedMaterials.map((m, idx) => {
+                                    const item = inventoryItems.find((i) => String(i.id) === String(m.inventory_item_id));
+                                    return (
+                                        <span key={idx} className="inline-flex items-center gap-1.5 bg-white border border-slate-200 rounded-full px-3 py-1 text-sm">
+                                            {item?.name || m.inventory_item_id} ×{m.quantity}
+                                            <button type="button" onClick={() => removeMaterial(idx)} className="text-red-400 hover:text-red-600"><Trash2 size={13} /></button>
+                                        </span>
+                                    );
+                                })}
+                            </div>
                         )}
                     </div>
-                </div>
 
-                {/* 3. Details */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Clinical Notes</label>
-                    <textarea
-                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 h-32"
-                        value={description}
-                        onChange={e => setDescription(e.target.value)}
-                        placeholder="Describe the procedure, observations, etc."
-                        required
-                    />
-                </div>
+                    <Field label="Images (X-Rays, Photos)">
+                        <Input type="file" multiple accept="image/*" onChange={(e) => setSelectedImages([...e.target.files])} />
+                    </Field>
 
-                {/* 4. Inventory Usage */}
-                <div className="border p-4 rounded bg-gray-50">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Materials Used (Applied to first record)</label>
-                    <div className="flex gap-2 mb-2 items-end">
-                        <select id="inv-select" className="border p-2 rounded flex-1">
-                            <option value="">Select Item</option>
-                            {inventoryItems.map(i => (
-                                <option key={i.id} value={i.id}>{i.name}</option> // Ideal to show stock
-                            ))}
-                        </select>
-                        <input id="inv-qty" type="number" className="border p-2 rounded w-20" placeholder="Qty" />
-                        <button type="button"
-                            className="bg-green-600 text-white px-3 py-2 rounded"
-                            onClick={() => {
-                                const sel = document.getElementById('inv-select');
-                                const qty = document.getElementById('inv-qty');
-                                addMaterial(sel.value, qty.value);
-                                sel.value = "";
-                                qty.value = "";
-                            }}
-                        >
-                            Add
-                        </button>
-                    </div>
-                    <ul className="list-disc pl-5">
-                        {usedMaterials.map((m, idx) => {
-                            const item = inventoryItems.find(i => String(i.id) === String(m.inventory_item_id));
-                            return (
-                                <li key={idx} className="flex justify-between w-64 text-sm">
-                                    <span>{item?.name || m.inventory_item_id} (x{m.quantity})</span>
-                                    <button type="button" onClick={() => removeMaterial(idx)} className="text-red-500 text-xs">Remove</button>
-                                </li>
-                            );
-                        })}
-                    </ul>
-                </div>
+                    <Button type="submit" size="lg" className="w-full" disabled={saving}>
+                        <Save size={18} /> {saving ? 'Saving…' : 'Save Treatment Session'}
+                    </Button>
 
-                {/* 5. Imaging */}
-                <div>
-                    <label className="block text-sm font-medium text-gray-700">Images (X-Rays, Photos)</label>
-                    <input
-                        type="file"
-                        multiple
-                        accept="image/*"
-                        className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-                        onChange={handleImageChange}
-                    />
-                </div>
-
-                {/* Submit */}
-                <div className="pt-4">
-                    <button
-                        type="submit"
-                        disabled={loading}
-                        className="w-full bg-blue-600 text-white py-2 px-4 rounded-md font-bold hover:bg-blue-700 disabled:bg-gray-400"
-                    >
-                        {loading ? 'Saving Session...' : 'Save Treatment Session'}
-                    </button>
-                </div>
-
-                {message && (
-                    <div className={`p-4 rounded ${message.includes('Error') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                        {message}
-                    </div>
-                )}
-            </form>
+                    {message && (
+                        <div className={`rounded-lg px-4 py-3 text-sm ${message.includes('Error') ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                            {message}
+                        </div>
+                    )}
+                </form>
+            </Card>
         </div>
     );
-};
-
-export default TreatmentSession;
+}

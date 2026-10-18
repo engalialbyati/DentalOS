@@ -109,3 +109,45 @@ CREATE TABLE lab_cases (
 );
 
 CREATE INDEX idx_lab_due_date ON lab_cases(due_date);
+
+-- 9. Patient medical history (added columns on patients)
+-- ALTER TABLE patients ADD COLUMN allergies TEXT;
+-- ALTER TABLE patients ADD COLUMN medical_conditions TEXT;
+-- ALTER TABLE patients ADD COLUMN medications TEXT;
+-- ALTER TABLE patients ADD COLUMN notes TEXT;
+
+-- 10. Lookups (dynamic dropdown values: condition, status, etc.)
+CREATE TABLE lookups (
+    id SERIAL PRIMARY KEY,
+    category VARCHAR(50) NOT NULL,
+    code VARCHAR(50) NOT NULL,
+    label VARCHAR(100) NOT NULL,
+    sort_order INT DEFAULT 0
+);
+
+-- 11. Billing / Invoices
+CREATE TABLE invoices (
+    id SERIAL PRIMARY KEY,
+    patient_id INT REFERENCES patients(id) ON DELETE CASCADE,
+    treatment_id INT REFERENCES treatments(id) ON DELETE SET NULL,
+    invoice_number VARCHAR(50),
+    subtotal DECIMAL(12,2) DEFAULT 0,
+    tax DECIMAL(5,2) DEFAULT 0,
+    discount DECIMAL(12,2) DEFAULT 0,
+    total DECIMAL(12,2) DEFAULT 0,
+    status VARCHAR(20) DEFAULT 'unpaid',  -- unpaid | partial | paid
+    issue_date DATE DEFAULT CURRENT_DATE,
+    due_date DATE,
+    paid_date DATE,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE invoice_items (
+    id SERIAL PRIMARY KEY,
+    invoice_id INT REFERENCES invoices(id) ON DELETE CASCADE,
+    description VARCHAR(300) NOT NULL,
+    quantity DECIMAL(10,2) DEFAULT 1,
+    unit_price DECIMAL(12,2) DEFAULT 0,
+    total DECIMAL(12,2) DEFAULT 0
+);

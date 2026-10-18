@@ -4,151 +4,166 @@ const db = require('../db');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const { asyncHandler } = require('../middleware/errorHandler');
+const { requireInt, clampString } = require('../middleware/validate');
 
-// Configure Multer for local storage
+// --- Hardened file upload config ---
+const UPLOAD_DIR = path.resolve(__dirname, '..', 'uploads');
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB per file
+const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        // Ensure directory exists: uploads/patients/{patientId}
-        // Note: req.body.patient_id might not be available yet if fields come after file?
-        // Multer processes fields in order. Best to use a general uploads dir and move?
-        // Or just use 'uploads/' and filename structure.
-        // Prompt says: "uploads/patients/{patient_id}/"
-        // Let's use a simpler approach: check patient_id in body if possible, or just 'uploads' and move later?
-        // Actually, let's just use 'uploads' for now and create the folder structure if we can.
-        // But req.body is not fully populated before file if not ordered correctly on client.
-        // Let's stick to a flat 'uploads' for simplicity unless strict requirement.
-        // "Do not save the file in the DB. Save it to a local folder named uploads/patients/{patient_id}/."
-        // We will try. If safe, just use 'uploads/'.
-        const dir = 'uploads';
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir);
-        }
-        cb(null, dir);
+        if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+        cb(null, UPLOAD_DIR);
     },
     filename: (req, file, cb) => {
-        // "P{id}_T{tooth}_{timestamp}.jpg"
-        // We need patient id and tooth number.
-        // If we can't get them here, we generate temp name and rename in the controller.
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-    }
+        const safeExt = ALLOWED_EXT.has(path.extname(file.originalname).toLowerCase())
+            ? path.extname(file.originalname).toLowerCase()
+            : '.jpg';
+        const rand = Math.random().toString(36).slice(2, 11);
+        cb(null, `tmp_${Date.now()}_${rand}${safeExt}`);
+    },
 });
 
-const upload = multer({ storage: storage });
+const fileFilter = (req, file, cb) => {
+    if (ALLOWED_MIME.has(file.mimetype)) return cb(null, true);
+    cb(new Error('Unsupported file type. Only images are allowed.'));
+};
 
-// POST /api/treatments
-// Handles creation of treatment + inventory deduction + image saving
-router.post('/', upload.array('images'), async (req, res) => {
-    const client = await db.pool.connect(); // Use transaction
-    try {
-        await client.query('BEGIN');
+const upload = multer({
+    storage,
+    fileFilter,
+    limits: { fileSize: MAX_FILE_SIZE, files: 10 },
+});
 
-        const { patient_id, date, tooth_number, description, materials } = req.body;
-        // materials is JSON string if sent via FormData
-        const materialsList = materials ? JSON.parse(materials) : [];
+// POST /api/treatments  (treatment + inventory FEFO deduction + image saving)
+router.post(
+    '/',
+    (req, res, next) => upload.array('images', 10)(req, res, (err) => {
+        if (err) return res.status(400).json({ error: err.message });
+        next();
+    }),
+    asyncHandler(async (req, res) => {
+        const client = await db.pool.connect();
+        try {
+            await client.query('BEGIN');
 
-        // 1. Insert Treatment
-        const treatmentRes = await client.query(
-            `INSERT INTO treatments (patient_id, date, tooth_number, description)
-             VALUES ($1, $2, $3, $4) RETURNING id`,
-            [patient_id, date || new Date(), tooth_number, description]
-        );
-        const treatmentId = treatmentRes.rows[0].id;
+            const patientId = requireInt(req.body, 'patient_id', { min: 1 });
+            const date = req.body.date || new Date().toISOString().slice(0, 10);
+            const toothNumber = req.body.tooth_number
+                ? requireInt(req.body, 'tooth_number', { min: 1, max: 32, default: null })
+                : null;
+            const description = clampString(req.body.description, 5000);
 
-        // 2. Process Materials (Inventory Deduction - FEFO)
-        for (const item of materialsList) {
-            const { inventory_item_id, quantity } = item;
-            let qtyNeeded = parseInt(quantity);
+            const materialsList = req.body.materials ? JSON.parse(req.body.materials) : [];
 
-            // Record usage
-            await client.query(
-                `INSERT INTO treatment_materials (treatment_id, inventory_item_id, quantity_used)
-                 VALUES ($1, $2, $3)`,
-                [treatmentId, inventory_item_id, qtyNeeded]
+            const treatmentRes = await client.query(
+                `INSERT INTO treatments (patient_id, date, tooth_number, description)
+                 VALUES ($1, $2, $3, $4) RETURNING id`,
+                [patientId, date, toothNumber, description]
             );
+            const treatmentId = treatmentRes.rows[0].id;
 
-            // Deduct from batches (FEFO)
-            const batchesRes = await client.query(
-                `SELECT id, quantity_on_hand FROM inventory_batches 
-                 WHERE item_id = $1 AND quantity_on_hand > 0 
-                 ORDER BY expiration_date ASC`,
-                [inventory_item_id]
-            );
+            for (const item of materialsList) {
+                const inventoryItemId = requireInt(item, 'inventory_item_id', { min: 1 });
+                const qtyNeeded = requireInt(item, 'quantity', { min: 1 });
 
-            for (const batch of batchesRes.rows) {
-                if (qtyNeeded <= 0) break;
-
-                const deduct = Math.min(batch.quantity_on_hand, qtyNeeded);
                 await client.query(
-                    `UPDATE inventory_batches SET quantity_on_hand = quantity_on_hand - $1 WHERE id = $2`,
-                    [deduct, batch.id]
-                );
-                qtyNeeded -= deduct;
-            }
-
-            if (qtyNeeded > 0) {
-                // Warning: Not enough stock? We proceed but maybe log it?
-                console.warn(`Item ${inventory_item_id} used more than available stock.`);
-                // Could error out here if strict.
-            }
-        }
-
-        // 3. Process Images
-        if (req.files) {
-            for (const file of req.files) {
-                // Move/Rename file to uploads/patients/{patient_id}/...
-                const targetDir = path.join('uploads', 'patients', String(patient_id));
-                if (!fs.existsSync(targetDir)) {
-                    fs.mkdirSync(targetDir, { recursive: true });
-                }
-
-                const ext = path.extname(file.originalname);
-                const newFilename = `P${patient_id}_T${tooth_number}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}${ext}`;
-                const targetPath = path.join(targetDir, newFilename);
-
-                fs.renameSync(file.path, targetPath);
-
-                const refNum = 'IMG-' + Date.now();
-                await client.query(
-                    `INSERT INTO treatment_images (treatment_id, file_path, file_reference_number)
+                    `INSERT INTO treatment_materials (treatment_id, inventory_item_id, quantity_used)
                      VALUES ($1, $2, $3)`,
-                    [treatmentId, targetPath, refNum]
+                    [treatmentId, inventoryItemId, qtyNeeded]
                 );
+
+                const batchesRes = await client.query(
+                    `SELECT id, quantity_on_hand FROM inventory_batches
+                     WHERE item_id = $1 AND quantity_on_hand > 0
+                     ORDER BY expiration_date ASC`,
+                    [inventoryItemId]
+                );
+
+                let remaining = qtyNeeded;
+                for (const batch of batchesRes.rows) {
+                    if (remaining <= 0) break;
+                    const deduct = Math.min(batch.quantity_on_hand, remaining);
+                    await client.query(
+                        `UPDATE inventory_batches SET quantity_on_hand = quantity_on_hand - $1 WHERE id = $2`,
+                        [deduct, batch.id]
+                    );
+                    remaining -= deduct;
+                }
+                if (remaining > 0) {
+                    console.warn(`Item ${inventoryItemId} under-supplied by ${remaining}`);
+                }
             }
+
+            // Move validated images into per-patient folder with safe names.
+            if (req.files && req.files.length) {
+                const targetDir = path.join(UPLOAD_DIR, 'patients', String(patientId));
+                fs.mkdirSync(targetDir, { recursive: true });
+
+                for (const file of req.files) {
+                    const ext = ALLOWED_EXT.has(path.extname(file.originalname).toLowerCase())
+                        ? path.extname(file.originalname).toLowerCase()
+                        : '.jpg';
+                    const safeName = `P${patientId}_T${toothNumber || 'X'}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}${ext}`;
+                    const relPath = path.join('uploads', 'patients', String(patientId), safeName);
+                    fs.renameSync(file.path, path.join(UPLOAD_DIR, 'patients', String(patientId), safeName));
+
+                    const refNum = 'IMG-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+                    await client.query(
+                        `INSERT INTO treatment_images (treatment_id, file_path, file_reference_number)
+                         VALUES ($1, $2, $3)`,
+                        [treatmentId, relPath.replace(/\\/g, '/'), refNum]
+                    );
+                }
+            }
+
+            await client.query('COMMIT');
+            res.status(201).json({ id: treatmentId, message: 'Treatment session saved.' });
+        } catch (err) {
+            await client.query('ROLLBACK');
+            // Clean up any temp files that were written before the failure.
+            if (req.files) {
+                req.files.forEach((f) => {
+                    if (fs.existsSync(f.path)) fs.unlinkSync(f.path);
+                });
+            }
+            throw err;
+        } finally {
+            client.release();
         }
-
-        await client.query('COMMIT');
-        res.status(201).json({ id: treatmentId, message: 'Treatment session saved.' });
-
-    } catch (err) {
-        await client.query('ROLLBACK');
-        console.error(err);
-        res.status(500).json({ error: 'Server error: ' + err.message });
-    } finally {
-        client.release();
-    }
-});
+    })
+);
 
 // GET /api/treatments/patient/:id
-router.get('/patient/:id', async (req, res) => {
-    const { id } = req.params;
-    try {
-        const result = await db.query(`
-            SELECT t.*, 
-                   (SELECT json_agg(ti.file_path) FROM treatment_images ti WHERE ti.treatment_id = t.id) as images,
-                   (SELECT json_agg(json_build_object('name', i.name, 'qty', tm.quantity_used)) 
-                    FROM treatment_materials tm 
-                    JOIN inventory_items i ON tm.inventory_item_id = i.id 
-                    WHERE tm.treatment_id = t.id) as materials
-            FROM treatments t
-            WHERE t.patient_id = $1
-            ORDER BY t.date DESC, t.created_at DESC
-        `, [id]);
-        res.json(result.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Server error' });
-    }
-});
+router.get(
+    '/patient/:id',
+    asyncHandler(async (req, res) => {
+        const treatments = await db.query(
+            `SELECT * FROM treatments WHERE patient_id = $1 ORDER BY date DESC, created_at DESC`,
+            [req.params.id]
+        );
+
+        // Assemble images + materials per treatment (SQLite has no json_agg).
+        for (const t of treatments.rows) {
+            const imgs = await db.query(
+                'SELECT file_path FROM treatment_images WHERE treatment_id = $1',
+                [t.id]
+            );
+            const mats = await db.query(
+                `SELECT i.name, tm.quantity_used AS qty
+                 FROM treatment_materials tm
+                 JOIN inventory_items i ON tm.inventory_item_id = i.id
+                 WHERE tm.treatment_id = $1`,
+                [t.id]
+            );
+            t.images = imgs.rows.map((r) => r.file_path);
+            t.materials = mats.rows;
+        }
+        res.json(treatments.rows);
+    })
+);
 
 module.exports = router;

@@ -1,92 +1,158 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import moment from 'moment';
+import { Users, CalendarCheck, Wallet, AlertTriangle, Clock, ArrowRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import {
+    ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid,
+} from 'recharts';
+import api from '../lib/api';
+import { dayjs, formatTime, formatCurrency, initials } from '../lib/format';
+import { Card, StatCard, PageHeader, Badge, EmptyState, Spinner } from './ui';
 
-const Dashboard = () => {
-    const [stats, setStats] = useState({ patients: 0, appointments: 0 });
-    const [todaysAppointments, setTodaysAppointments] = useState([]);
+export default function Dashboard() {
+    const [data, setData] = useState(null);
+    const [alerts, setAlerts] = useState(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState(false);
 
     useEffect(() => {
-        // Mock stats or fetch real ones if endpoints exist
-        // For now, let's fetch lists and count
-        const fetchData = async () => {
-            try {
-                const [ptsInfo, apptsInfo] = await Promise.all([
-                    axios.get('http://localhost:5001/api/patients'),
-                    axios.get('http://localhost:5001/api/appointments')
-                ]);
+        Promise.all([
+            api.get('/api/patients?limit=1000'),
+            api.get('/api/appointments'),
+            api.get('/api/invoices/stats/summary'),
+            api.get('/api/alerts'),
+        ])
+            .then(([pts, appts, inv, al]) => {
+                const apptData = appts.data;
+                const patientData = pts.data;
+                const today = dayjs().format('YYYY-MM-DD');
+                const todays = apptData
+                    .filter((a) => dayjs(a.start_time).format('YYYY-MM-DD') === today)
+                    .sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
 
-                const appts = apptsInfo.data;
-                const patients = ptsInfo.data;
+                // Appointments per day for the last 7 days (mini chart).
+                const chart = [];
+                for (let i = 6; i >= 0; i--) {
+                    const d = dayjs().subtract(i, 'day');
+                    const label = d.format('ddd');
+                    const count = apptData.filter(
+                        (a) => dayjs(a.start_time).format('YYYY-MM-DD') === d.format('YYYY-MM-DD')
+                    ).length;
+                    chart.push({ label, visits: count });
+                }
 
-                // Filter for today
-                const today = moment().format('YYYY-MM-DD');
-                const todayRes = appts.filter(a => moment(a.start_time).format('YYYY-MM-DD') === today);
-
-                setStats({ patients: patients.length, appointments: appts.length });
-                setTodaysAppointments(todayRes.sort((a, b) => new Date(a.start_time) - new Date(b.start_time)));
-
-            } catch (err) {
-                console.error("Dashboard fetch error", err);
-            }
-        };
-        fetchData();
+                setData({
+                    patients: patientData,
+                    appointments: apptData,
+                    todays,
+                    stats: inv.data,
+                    chart,
+                });
+                setAlerts(al.data);
+                setError(false);
+            })
+            .catch((e) => { console.error('Dashboard load error', e); setError(true); })
+            .finally(() => setLoading(false));
     }, []);
 
-    return (
-        <div className="p-6">
-            <h1 className="text-3xl font-bold mb-6">Clinic Dashboard</h1>
+    if (loading) return <Spinner className="min-h-[60vh]" />;
+    if (error || !data) {
+        return (
+            <div className="p-6 max-w-7xl mx-auto">
+                <PageHeader title="Dashboard" />
+                <Card>
+                    <EmptyState title="Couldn't load dashboard data" message="Please check the server is running and try again." />
+                </Card>
+            </div>
+        );
+    }
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                <div className="bg-white p-6 rounded shadow border-l-4 border-blue-500">
-                    <h3 className="text-gray-500 text-sm uppercase">Total Patients</h3>
-                    <p className="text-3xl font-bold">{stats.patients}</p>
-                </div>
-                <div className="bg-white p-6 rounded shadow border-l-4 border-green-500">
-                    <h3 className="text-gray-500 text-sm uppercase">Appointments (Total)</h3>
-                    <p className="text-3xl font-bold">{stats.appointments}</p>
-                </div>
-                <div className="bg-white p-6 rounded shadow border-l-4 border-purple-500">
-                    <h3 className="text-gray-500 text-sm uppercase">Today's Visits</h3>
-                    <p className="text-3xl font-bold">{todaysAppointments.length}</p>
-                </div>
+    const { patients, todays, stats, chart } = data;
+
+    return (
+        <div className="p-6 max-w-7xl mx-auto">
+            <PageHeader title="Dashboard" subtitle="Overview of your clinic activity today." />
+
+            {/* KPI cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <StatCard icon={Users} label="Total Patients" value={patients.length} color="brand" />
+                <StatCard icon={CalendarCheck} label="Today's Appointments" value={todays.length} color="blue" />
+                <StatCard icon={Wallet} label="Outstanding" value={formatCurrency(stats?.outstanding || 0)} color="amber" trend={`Billed ${formatCurrency(stats?.total_billed || 0)}`} />
+                <StatCard icon={AlertTriangle} label="Active Alerts" value={alerts?.count || 0} color={alerts?.count > 0 ? 'red' : 'green'} />
             </div>
 
-            <div className="bg-white p-6 rounded shadow">
-                <h2 className="text-xl font-bold mb-4">Today's Schedule</h2>
-                {todaysAppointments.length === 0 ? (
-                    <p className="text-gray-500">No appointments scheduled for today.</p>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                {/* Visits chart */}
+                <Card className="lg:col-span-2">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-bold text-slate-800">Appointments — Last 7 Days</h3>
+                        <Badge color="brand">{data.appointments.length} total</Badge>
+                    </div>
+                    <ResponsiveContainer width="100%" height={260}>
+                        <AreaChart data={chart} margin={{ left: -20, right: 8, top: 4 }}>
+                            <defs>
+                                <linearGradient id="visits" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor="#1f8da5" stopOpacity={0.35} />
+                                    <stop offset="95%" stopColor="#1f8da5" stopOpacity={0} />
+                                </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#eef2f6" vertical={false} />
+                            <XAxis dataKey="label" tickLine={false} axisLine={false} fontSize={12} stroke="#94a3b8" />
+                            <YAxis allowDecimals={false} tickLine={false} axisLine={false} fontSize={12} stroke="#94a3b8" />
+                            <Tooltip contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 13 }} />
+                            <Area type="monotone" dataKey="visits" stroke="#1f8da5" strokeWidth={2.5} fill="url(#visits)" />
+                        </AreaChart>
+                    </ResponsiveContainer>
+                </Card>
+
+                {/* Alerts panel */}
+                <Card>
+                    <h3 className="font-bold text-slate-800 mb-4">Needs Attention</h3>
+                    <div className="space-y-3">
+                        <AlertRow to="/inventory" count={alerts?.lowStock.length} label="Low stock items" />
+                        <AlertRow to="/inventory" count={alerts?.expiring.length} label="Expiring soon (30d)" />
+                        <AlertRow to="/lab-cases" count={alerts?.overdueLab.length} label="Overdue lab cases" />
+                    </div>
+                    {alerts?.count === 0 && <p className="text-sm text-slate-400 text-center py-6">Everything looks good 🎉</p>}
+                </Card>
+            </div>
+
+            {/* Today's schedule */}
+            <Card className="mt-6">
+                <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-bold text-slate-800">Today's Schedule</h3>
+                    <Link to="/schedule" className="text-sm text-brand-600 hover:text-brand-700 font-semibold flex items-center gap-1">
+                        View calendar <ArrowRight size={15} />
+                    </Link>
+                </div>
+                {todays.length === 0 ? (
+                    <EmptyState icon={Clock} title="No appointments today" message="Your schedule is clear." />
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="min-w-full">
-                            <thead>
-                                <tr className="border-b">
-                                    <th className="text-left py-2">Time</th>
-                                    <th className="text-left py-2">Patient</th>
-                                    <th className="text-left py-2">Provider</th>
-                                    <th className="text-left py-2">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {todaysAppointments.map(appt => (
-                                    <tr key={appt.id} className="border-b hover:bg-gray-50">
-                                        <td className="py-2">{moment(appt.start_time).format('LT')}</td>
-                                        <td className="py-2 font-medium">{appt.patient_first} {appt.patient_last}</td>
-                                        <td className="py-2 text-gray-600">{appt.dentist_name || 'Unassigned'}</td>
-                                        <td className="py-2">
-                                            <span className={`px-2 py-1 rounded text-xs ${appt.status === 'confirmed' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
-                                                {appt.status}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                    <div className="divide-y divide-slate-100">
+                        {todays.map((a) => (
+                            <div key={a.id} className="flex items-center gap-4 py-3">
+                                <div className="w-11 h-11 rounded-full bg-brand-50 text-brand-700 flex items-center justify-center font-bold text-sm">
+                                    {initials(a.patient_name)}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="font-semibold text-slate-800 truncate">{a.patient_name}</p>
+                                    <p className="text-sm text-slate-500">{a.notes || 'Checkup'}</p>
+                                </div>
+                                <Badge color={a.status === 'confirmed' ? 'green' : 'gray'}>{a.status}</Badge>
+                                <span className="text-sm text-slate-500 w-20 text-right">{formatTime(a.start_time)}</span>
+                            </div>
+                        ))}
                     </div>
                 )}
-            </div>
+            </Card>
         </div>
     );
-};
+}
 
-export default Dashboard;
+function AlertRow({ to, count, label }) {
+    return (
+        <Link to={to} className="flex items-center justify-between py-2 group">
+            <span className="text-sm text-slate-600 group-hover:text-slate-900">{label}</span>
+            <Badge color={count > 0 ? 'red' : 'green'}>{count || 0}</Badge>
+        </Link>
+    );
+}

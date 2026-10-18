@@ -1,7 +1,29 @@
-.tmp/
+# Dependencies
+node_modules/
+*/node_modules/
 
+# Build output
+dist/
+build/
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
 credentials.json
 *.log
+
+# Temp / caches
+.tmp/
 __pycache__/
 *.pyc
 .DS_Store
+.vite/
+
+# Uploads (runtime user data)
+server/uploads/
+
+# Local database (runtime data)
+*.db
+*.db-shm
+*.db-wal
